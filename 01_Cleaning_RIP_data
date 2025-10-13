@@ -1,0 +1,114 @@
+############################################################
+# RIP-seq Downstream Analysis (AR vs IgG)
+# Author: [Your Name]
+# Description: Explore RIP-seq differential peak results
+# Input: AR_vs_IgG_peak_compares_table.tsv
+############################################################
+
+# --- Load libraries ---
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+libs <- c("ggplot2", "dplyr", "tidyr", "pheatmap", "ChIPseeker",
+          "TxDb.Hsapiens.UCSC.hg38.knownGene", "org.Hs.eg.db", "data.table")
+for (pkg in libs) if (!require(pkg, character.only = TRUE)) BiocManager::install(pkg, ask=FALSE)
+
+library(ggplot2)
+library(dplyr)
+library(pheatmap)
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(data.table)
+
+# --- Input files ---
+peak_table <- "AR_vs_IgG_peak_compares_table.tsv"
+
+# --- Load data ---
+tbl <- fread(peak_table)
+cat("Loaded", nrow(tbl), "rows\n")
+
+# Inspect columns
+cat("Column names:\n")
+print(names(tbl))
+
+# --- Basic QC summaries ---
+summary(tbl)
+if ("log2FoldChange" %in% names(tbl)) {
+  hist(tbl$log2FoldChange, breaks=100, main="Distribution of log2 Fold Change", col="skyblue")
+}
+
+# If pvalue/FDR columns exist:
+if (all(c("pvalue", "FDR") %in% names(tbl))) {
+  hist(tbl$pvalue, breaks=100, main="P-value distribution", col="tomato")
+  cat("Significant peaks (FDR < 0.05):", sum(tbl$FDR < 0.05, na.rm=TRUE), "\n")
+  cat("Up peaks (FDR < 0.05 & log2FC > 1):", sum(tbl$FDR < 0.05 & tbl$log2FoldChange > 1, na.rm=TRUE), "\n")
+  cat("Down peaks (FDR < 0.05 & log2FC < -1):", sum(tbl$FDR < 0.05 & tbl$log2FoldChange < -1, na.rm=TRUE), "\n")
+}
+
+# --- Volcano plot ---
+if (all(c("log2FoldChange", "pvalue") %in% names(tbl))) {
+  ggplot(tbl, aes(x=log2FoldChange, y=-log10(pvalue))) +
+    geom_point(aes(color = FDR < 0.05), alpha=0.5) +
+    scale_color_manual(values=c("grey","red")) +
+    theme_minimal() +
+    labs(title="Volcano plot: AR vs IgG",
+         x="log2 Fold Change (AR/IP vs IgG)",
+         y="-log10(p-value)") +
+    theme(legend.position="top")
+}
+
+# --- MA plot ---
+if (all(c("baseMean", "log2FoldChange") %in% names(tbl))) {
+  ggplot(tbl, aes(x=log10(baseMean + 1), y=log2FoldChange, color=FDR < 0.05)) +
+    geom_point(alpha=0.5) +
+    theme_minimal() +
+    labs(title="MA Plot", x="log10(Base mean expression)", y="log2 Fold Change")
+}
+
+# --- Peak width distribution (if coordinates are given) ---
+if (all(c("chr","start","end") %in% names(tbl))) {
+  tbl <- tbl %>% mutate(width = end - start)
+  ggplot(tbl, aes(x=width)) +
+    geom_histogram(bins=100, fill="lightblue", color="black") +
+    theme_minimal() +
+    labs(title="Peak width distribution", x="Width (bp)", y="Count")
+}
+
+# --- Region annotation (optional, requires BED format) ---
+# If you have coordinates, annotate peaks to genomic features
+if (all(c("chr","start","end") %in% names(tbl))) {
+  cat("Annotating peaks to genomic features...\n")
+  tmp_bed <- "temp_peaks.bed"
+  write.table(tbl[,c("chr","start","end")], tmp_bed, sep="\t", quote=FALSE, col.names=FALSE, row.names=FALSE)
+  peakAnno <- annotatePeak(tmp_bed, tssRegion=c(-3000, 3000),
+                           TxDb=TxDb.Hsapiens.UCSC.hg38.knownGene, annoDb="org.Hs.eg.db")
+  plotAnnoPie(peakAnno)
+  plotDistToTSS(peakAnno)
+}
+
+# --- Heatmap of top differential peaks ---
+if ("log2FoldChange" %in% names(tbl)) {
+  top <- tbl %>% arrange(desc(abs(log2FoldChange))) %>% head(100)
+  mat <- as.matrix(top %>% select_if(is.numeric))
+  pheatmap(mat, main="Top 100 differential peaks (numeric columns)")
+}
+
+# --- Sequence motif preparation (optional) ---
+# Extract BED file for up peaks (to use with HOMER/MEME later)
+if (all(c("chr","start","end","log2FoldChange","FDR") %in% names(tbl))) {
+  up_bed <- tbl %>%
+    filter(FDR < 0.05, log2FoldChange > 1) %>%
+    select(chr, start, end)
+  write.table(up_bed, "AR_up_peaks.bed", sep="\t", quote=FALSE, col.names=FALSE, row.names=FALSE)
+  cat("Saved upregulated peaks to AR_up_peaks.bed for motif analysis\n")
+}
+
+# --- Per-gene summaries ---
+if ("gene_name" %in% names(tbl)) {
+  gene_counts <- tbl %>% group_by(gene_name) %>% summarise(n_peaks = n())
+  top_genes <- head(arrange(gene_counts, desc(n_peaks)), 20)
+  barplot(top_genes$n_peaks, names.arg=top_genes$gene_name, las=2, col="lightgreen",
+          main="Top genes by number of peaks", ylab="# peaks")
+}
+
+cat("✅ Analysis complete! Check your plots and intermediate files.\n")
+############################################################
