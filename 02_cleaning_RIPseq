@@ -1,0 +1,112 @@
+###############################################################
+# RIP-seq Analysis Pipeline in R
+# Input: AR_965_vs_IgG_peak_compare_table.tsv
+# Author: [Your Name]
+# Date: [Today's Date]
+###############################################################
+
+# ========== 1. Setup Environment ==========
+# Install required packages if not yet installed
+packages <- c("tidyverse", "EnhancedVolcano", "pheatmap", 
+              "ggplot2", "clusterProfiler", "org.Hs.eg.db", 
+              "AnnotationDbi", "ggrepel", "RColorBrewer", "ComplexHeatmap")
+installed <- rownames(installed.packages())
+for (pkg in packages) {
+  if (!(pkg %in% installed)) install.packages(pkg, dependencies = TRUE)
+}
+# For Bioconductor packages (annotation, enrichment)
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+bioc_pkgs <- c("org.Hs.eg.db", "clusterProfiler", "EnhancedVolcano", "ComplexHeatmap")
+for (pkg in bioc_pkgs) {
+  if (!require(pkg, character.only = TRUE)) BiocManager::install(pkg)
+}
+
+# Load libraries
+library(tidyverse)
+library(EnhancedVolcano)
+library(pheatmap)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(ggrepel)
+library(ComplexHeatmap)
+
+# ========== 2. Load and Inspect Data ==========
+data <- read.delim("AR_965_vs_IgG_peak_compare_table.tsv", header = TRUE, sep = "\t")
+cat("Data dimensions:", dim(data), "\n")
+head(data)
+
+# Expect columns like: peak_id, chr, start, end, log2FC, pvalue, FDR, gene_id, gene_name, etc.
+
+# ========== 3. Basic QC ==========
+summary(data$log2FC)
+summary(data$pvalue)
+hist(data$log2FC, breaks = 50, col = "skyblue", main = "log2FC Distribution", xlab = "log2 Fold Change")
+
+# ========== 4. Identify Significant Peaks ==========
+# Adjust p-values if not already corrected
+if (!"FDR" %in% names(data)) {
+  data$FDR <- p.adjust(data$pvalue, method = "BH")
+}
+
+sig_cutoff <- 0.05
+fc_cutoff <- 1
+sig_peaks <- data %>%
+  filter(FDR < sig_cutoff & abs(log2FC) > fc_cutoff)
+cat("Number of significant peaks:", nrow(sig_peaks), "\n")
+
+# ========== 5. Volcano Plot ==========
+EnhancedVolcano(
+  data,
+  lab = data$gene_name,
+  x = 'log2FC',
+  y = 'pvalue',
+  pCutoff = sig_cutoff,
+  FCcutoff = fc_cutoff,
+  title = 'RIP-seq: AR_965 vs IgG',
+  subtitle = 'Volcano plot of RIP peaks',
+  caption = 'Cutoffs: FDR < 0.05, |log2FC| > 1',
+  pointSize = 2.0,
+  labSize = 3.0,
+  colAlpha = 0.7
+)
+
+# ========== 6. Heatmap of Top Peaks ==========
+# Subset top 50 significant peaks
+top_peaks <- sig_peaks %>%
+  arrange(FDR) %>%
+  head(50)
+
+# If expression columns exist (e.g., AR_965, IgG)
+expr_cols <- grep("AR_965|IgG", colnames(data), value = TRUE)
+if (length(expr_cols) > 1) {
+  mat <- as.matrix(data[top_peaks$peak_id, expr_cols])
+  mat <- t(scale(t(mat)))
+  pheatmap(mat, show_rownames = FALSE, main = "Top 50 Significant Peaks")
+}
+
+# ========== 7. Peak Annotation to Genes ==========
+# If not already annotated:
+if (!"gene_symbol" %in% names(data) & "gene_id" %in% names(data)) {
+  data$gene_symbol <- mapIds(org.Hs.eg.db, keys = data$gene_id,
+                             keytype = "ENSEMBL", column = "SYMBOL", multiVals = "first")
+}
+
+# ========== 8. GO Enrichment (optional) ==========
+if ("gene_id" %in% names(sig_peaks)) {
+  ego <- enrichGO(gene = unique(sig_peaks$gene_id),
+                  OrgDb = org.Hs.eg.db,
+                  keyType = "ENSEMBL",
+                  ont = "BP",
+                  pAdjustMethod = "BH",
+                  pvalueCutoff = 0.05,
+                  qvalueCutoff = 0.2)
+  print(head(ego))
+  barplot(ego, showCategory = 20, title = "GO Enrichment: Significant Peaks")
+}
+
+# ========== 9. Save Results ==========
+write.table(sig_peaks, file = "AR_965_vs_IgG_significant_peaks.tsv",
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+cat("\n✅ Analysis complete! Significant peaks saved to 'AR_965_vs_IgG_significant_peaks.tsv'\n")
