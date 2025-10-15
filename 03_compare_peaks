@@ -1,0 +1,101 @@
+#=============================
+# RIP-seq Comparison Script
+#=============================
+
+# Load libraries
+library(dplyr)
+library(readr)
+library(VennDiagram)
+library(pheatmap)
+library(ggplot2)
+library(gridExtra)
+
+#-----------------------------
+# 1. Load data
+#-----------------------------
+ar965 <- read_tsv("AR_965_vs_IgG_peak_compare_table.tsv")
+ar966 <- read_tsv("AR_966_vs_IgG_peak_compare_table.tsv")
+
+# Ensure required columns: gene_name, log2FoldChange, type
+# If your column names are different, adjust here
+
+#-----------------------------
+# 2. Venn Diagram
+#-----------------------------
+genes_965 <- unique(ar965$gene_name)
+genes_966 <- unique(ar966$gene_name)
+
+venn.plot <- draw.pairwise.venn(
+  area1 = length(genes_965),
+  area2 = length(genes_966),
+  cross.area = length(intersect(genes_965, genes_966)),
+  category = c("AR-965", "AR-966"),
+  fill = c("blue", "red"),
+  alpha = 0.5,
+  cex = 2,
+  cat.cex = 2
+)
+
+# Save Venn diagram
+png("RIPseq_Venn.png", width=800, height=800)
+grid.draw(venn.plot)
+dev.off()
+
+#-----------------------------
+# 3. Heatmap of log2FoldChange
+#-----------------------------
+merged <- full_join(
+  ar965 %>% select(gene_name, log2FoldChange) %>% rename(AR965 = log2FoldChange),
+  ar966 %>% select(gene_name, log2FoldChange) %>% rename(AR966 = log2FoldChange),
+  by = "gene_name"
+)
+
+# Replace NA with 0
+merged[is.na(merged)] <- 0
+
+# Convert to matrix for heatmap
+mat <- as.matrix(merged[, -1])
+rownames(mat) <- merged$gene_name
+
+# Heatmap
+pheatmap(mat,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         main = "RIP-seq Binding/Deletion Heatmap")
+
+# Save heatmap
+png("RIPseq_Heatmap.png", width=1000, height=1200)
+pheatmap(mat,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         main = "RIP-seq Binding/Deletion Heatmap")
+dev.off()
+
+#-----------------------------
+# 4. Coding vs Noncoding RNA Comparison
+#-----------------------------
+coding_965 <- ar965 %>% group_by(type) %>% summarise(count = n())
+coding_966 <- ar966 %>% group_by(type) %>% summarise(count = n())
+
+coding_df <- full_join(coding_965, coding_966, by = "type", suffix = c("_965", "_966"))
+coding_df[is.na(coding_df)] <- 0
+
+# Bar plot
+p <- ggplot(coding_df, aes(x=type)) +
+  geom_bar(aes(y=count_965, fill="AR-965"), stat="identity", position="dodge") +
+  geom_bar(aes(y=count_966, fill="AR-966"), stat="identity", position="dodge") +
+  scale_fill_manual(values=c("blue", "red")) +
+  theme_minimal() +
+  labs(y="Number of RNAs", fill="Sample", title="Coding vs Noncoding RNA Bound")
+
+# Save bar plot
+ggsave("RIPseq_Coding_vs_Noncoding.png", plot = p, width = 8, height = 6)
+
+#-----------------------------
+# 5. Optional: Save gene lists
+#-----------------------------
+write.table(intersect(genes_965, genes_966), "Shared_genes.txt", row.names=F, col.names=F, quote=F)
+write.table(setdiff(genes_965, genes_966), "Unique_AR965_genes.txt", row.names=F, col.names=F, quote=F)
+write.table(setdiff(genes_966, genes_965), "Unique_AR966_genes.txt", row.names=F, col.names=F, quote=F)
