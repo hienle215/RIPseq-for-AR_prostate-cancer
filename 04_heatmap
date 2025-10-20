@@ -1,0 +1,556 @@
+#=============================
+# RIP-seq Comparison Script
+#=============================
+
+# Load libraries
+library(dplyr)
+library(readr)
+library(VennDiagram)
+library(pheatmap)
+library(ggplot2)
+library(gridExtra)
+library(tidyverse)
+library(EnhancedVolcano)
+library(pheatmap)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(ggrepel)
+library(ComplexHeatmap)
+library(ggpubr)
+
+#-----------------------------
+# 1. Load data
+#-----------------------------
+setwd("C:/Users/leh/OneDrive - TUNI.fi/Desktop/lncRNA_prostate_cancer/RIP_seq")
+ar965 = read.delim("C:/Users/leh/OneDrive - TUNI.fi/Desktop/lncRNA_prostate_cancer/RIP_seq/AR_vs_IgG/AR_965_vs_IgG/AR_965_vs_IgG_peak_compare_table.tsv", header = TRUE, sep = "\t")
+ar966 <- read.delim("C:/Users/leh/OneDrive - TUNI.fi/Desktop/lncRNA_prostate_cancer/RIP_seq/AR_vs_IgG/AR_966_vs_IgG/AR_966_vs_IgG_peak_compare_table.tsv", header = TRUE, sep = "\t")
+
+# Ensure required columns: gene_name, log2FoldChange, type
+# If your column names are different, adjust here
+
+#-----------------------------
+# 2. Venn Diagram
+#-----------------------------
+genes_965 <- unique(ar965$Overlap_Gene)
+genes_966 <- unique(ar966$Overlap_Gene)
+
+venn.plot <- draw.pairwise.venn(
+  area1 = length(genes_965),
+  area2 = length(genes_966),
+  cross.area = length(intersect(genes_965, genes_966)),
+  category = c("AR-965", "AR-966"),
+  fill = c("lightgreen", "lightyellow"),
+  alpha = 0.5,
+  cex = 2,
+  cat.cex = 2
+)
+library(ggpubr)
+ggexport(venn.plot, filename = "overview_venn_all.tiff", width = 2000, highth = 2000, res = 300)
+
+#----------------------venn plot for binding ----------------------------------------------------------------------------------------------------------
+# Load VennDiagram library
+library(VennDiagram)
+
+# 1️⃣ Filter only '+' rows from each dataset
+ar965_plus <- subset(ar965, In_AR_965 == "+")
+ar966_plus <- subset(ar966, In_AR_966 == "+")
+
+# 2️⃣ Extract unique gene names from Overlap_Gene
+genes_965 <- unique(na.omit(ar965_plus$Overlap_Gene))
+genes_966 <- unique(na.omit(ar966_plus$Overlap_Gene))
+
+# 3️⃣ Check the counts
+length(genes_965)
+length(genes_966)
+length(intersect(genes_965, genes_966))
+
+# 4️⃣ Draw Venn diagram
+venn.plot.1 <- draw.pairwise.venn(
+  area1 = length(genes_965),
+  area2 = length(genes_966),
+  cross.area = length(intersect(genes_965, genes_966)),
+  category = c("AR-965 (+)", "AR-966 (+)"),
+  fill = c("steelblue", "tomato"),
+  alpha = 0.5,
+  cex = 2,
+  cat.cex = 2,
+  cat.pos = c(-20, 20),
+  cat.dist = c(0.05, 0.05)
+)
+# Save Venn diagram
+library(grid)
+tiff("venn_plot.tiff", width = 2000, height = 2000, res = 300)  # open TIFF device
+grid.draw(venn.plot.1)                                          # draw the Venn diagram
+dev.off()                                                       # close device and save file
+
+###----------------------------------------------------Correlation for binding between AR965 and AR966-----------------------------------------------------------
+ar965_plus <- subset(ar965, In_AR_965 == "+")
+ar966_plus <- subset(ar966, In_AR_966 == "+")
+
+genes_965 <- unique(na.omit(ar965_plus$Overlap_Gene))
+genes_966 <- unique(na.omit(ar966_plus$Overlap_Gene))
+
+cat("AR-965 genes:", length(genes_965), "\n")
+cat("AR-966 genes:", length(genes_966), "\n")
+cat("Overlap:", length(intersect(genes_965, genes_966)), "\n")
+
+ar965_unique <- ar965_plus %>%
+  distinct(Overlap_Gene, .keep_all = TRUE) %>%
+  select(Overlap_Gene, log2foldchange) %>%
+  rename(AR965 = log2foldchange)
+
+ar966_unique <- ar966_plus %>%
+  distinct(Overlap_Gene, .keep_all = TRUE) %>%
+  select(Overlap_Gene, log2foldchange) %>%
+  rename(AR966 = log2foldchange)
+
+merged <- full_join(ar965_unique, ar966_unique, by = "Overlap_Gene")
+
+cor_val <- cor(merged$AR965, merged$AR966, use = "pairwise.complete.obs")# calculation of correlation
+
+correlation = ggplot(merged, aes(x = AR965, y = AR966)) +
+  geom_point(color = "darkblue", alpha = 0.6, size = 2) +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  theme_bw(base_size = 14) +
+  labs(
+    title = "Correlation of log2 Fold Change between AR-965 and AR-966",
+    x = "AR-965 log2FC",
+    y = "AR-966 log2FC"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  # 🧩 Add correlation text in top-left corner
+  annotate(
+    "text",
+    x = min(merged$AR965, na.rm = TRUE),   # left side of the plot
+    y = max(merged$AR966, na.rm = TRUE),   # top side of the plot
+    label = paste0("r = ", round(cor_val, 3)),
+    hjust = 0, vjust = 1, size = 6, fontface = "bold", color = "black"
+  )
+ggexport(correlation, filename = "correlation_binding.tiff", width = 2500, highth = 2500, res = 300)
+
+#------------------------------------------------- venn plot for deleting----------------------------------------------------------------------
+ar965_plus <- subset(ar965, In_AR_965 == "-")
+ar966_plus <- subset(ar966, In_AR_966 == "-")
+
+genes_965 <- unique(na.omit(ar965_plus$Overlap_Gene))
+genes_966 <- unique(na.omit(ar966_plus$Overlap_Gene))
+
+length(genes_965)
+length(genes_966)
+length(intersect(genes_965, genes_966))
+
+venn.plot.2 <- draw.pairwise.venn(
+  area1 = length(genes_965),
+  area2 = length(genes_966),
+  cross.area = length(intersect(genes_965, genes_966)),
+  category = c("AR-965 (+)", "AR-966 (+)"),
+  fill = c("steelblue", "tomato"),
+  alpha = 0.5,
+  cex = 2,
+  cat.cex = 2,
+  cat.pos = c(-20, 20),
+  cat.dist = c(0.05, 0.05)
+)
+# Save Venn diagram
+library(grid)
+tiff("venn_plot_deleting.tiff", width = 2000, height = 2000, res = 300)  # open TIFF device
+grid.draw(venn.plot.2)                                          # draw the Venn diagram
+dev.off()                                                       # close device and save file
+
+###----------------------------------------------------Correlation for deleting between AR965 and AR966-----------------------------------------------------------
+library(dplyr)
+ar965_minus <- subset(ar965, In_AR_965 == "-")
+ar966_minus <- subset(ar966, In_AR_966 == "-")
+genes_965 <- unique(na.omit(ar965_minus$Overlap_Gene))
+genes_966 <- unique(na.omit(ar966_minus$Overlap_Gene))
+
+cat("AR-965 genes:", length(genes_965), "\n")
+cat("AR-966 genes:", length(genes_966), "\n")
+cat("Overlap:", length(intersect(genes_965, genes_966)), "\n")
+
+ar965_unique <- ar965_minus %>%
+  dplyr::distinct(Overlap_Gene, .keep_all = TRUE) %>%
+  dplyr::select(Overlap_Gene, log2foldchange) %>%
+  dplyr::rename(AR965 = log2foldchange)
+
+ar966_unique <- ar966_minus %>%
+  dplyr::distinct(Overlap_Gene, .keep_all = TRUE) %>%
+  dplyr::select(Overlap_Gene, log2foldchange) %>%
+  dplyr::rename(AR966 = log2foldchange)
+
+merged <- dplyr::full_join(ar965_unique, ar966_unique, by = "Overlap_Gene")
+
+cor_val <- cor(merged$AR965, merged$AR966, use = "pairwise.complete.obs")
+
+correlation = ggplot(merged, aes(x = AR965, y = AR966)) +
+  geom_point(color = "darkblue", alpha = 0.6, size = 2) +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  theme_bw(base_size = 14) +
+  labs(
+    title = "Correlation of log2 Fold Change between AR-965 and AR-966 (-)",
+    x = "AR-965 log2FC",
+    y = "AR-966 log2FC"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  annotate(
+    "text",
+    x = min(merged$AR965, na.rm = TRUE),
+    y = max(merged$AR966, na.rm = TRUE),
+    label = paste0("r = ", round(cor_val, 3)),
+    hjust = 0, vjust = 1, size = 6, fontface = "bold", color = "black"
+  )
+
+ggexport(correlation, filename = "correlation_deleting.tiff", width = 2500, highth = 2500, res = 300)
+
+#------------------------------------------------------find gene names and function-----------------------------------------------------------
+library(biomaRt)
+####### working with ar965
+ensembl_ids <- unique(ar965$Overlap_Gene)
+ensembl_ids <- ensembl_ids[grepl("^ENSG", ensembl_ids)]
+ensembl_ids <- sub("\\..*$", "", ensembl_ids)
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")# 2️⃣ Connect to Ensembl BioMart
+gene_info <- getBM(
+  attributes = c("ensembl_gene_id", "external_gene_name", "gene_biotype"),
+  filters = "ensembl_gene_id",
+  values = ensembl_ids,
+  mart = ensembl
+)# Query gene biotype and symbol
+ar965_annotated <- ar965 # Create a copy of ar965
+ar965_annotated$Overlap_Gene_clean <- sub("\\..*$", "", ar965_annotated$Overlap_Gene)# Clean Overlap_Gene column in ar965 for matching
+ar965_annotated <- merge(
+  ar965_annotated,
+  gene_info,
+  by.x = "Overlap_Gene_clean",
+  by.y = "ensembl_gene_id",
+  all.x = TRUE
+)# Merge, keeping all rows
+#Assigning "Intergenic" is a practical way to handle peaks that do not match any known Ensembl gene, keeping all peaks in your dataset for analysis.
+ar965_annotated$gene_biotype[is.na(ar965_annotated$gene_biotype)] <- "Intergenic" 
+ar965_annotated$external_gene_name[is.na(ar965_annotated$external_gene_name)] <- "Intergenic"
+head(ar965_annotated[, c("Overlap_Gene", "external_gene_name", "gene_biotype")])
+biotype_summary <- ar965_annotated %>%
+  group_by(gene_biotype) %>%
+  summarise(
+    Peak_Count = n()
+  ) %>%
+  arrange(desc(Peak_Count))
+biotype_summary
+
+#### working with ar966
+ensembl_ids <- unique(ar966$Overlap_Gene)
+ensembl_ids <- ensembl_ids[grepl("^ENSG", ensembl_ids)]
+ensembl_ids <- sub("\\..*$", "", ensembl_ids)
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")# 2️⃣ Connect to Ensembl BioMart
+gene_info <- getBM(
+  attributes = c("ensembl_gene_id", "external_gene_name", "gene_biotype"),
+  filters = "ensembl_gene_id",
+  values = ensembl_ids,
+  mart = ensembl
+)# Query gene biotype and symbol
+ar966_annotated <- ar966 # Create a copy of ar965
+ar966_annotated$Overlap_Gene_clean <- sub("\\..*$", "", ar966_annotated$Overlap_Gene)# Clean Overlap_Gene column in ar965 for matching
+ar966_annotated <- merge(
+  ar966_annotated,
+  gene_info,
+  by.x = "Overlap_Gene_clean",
+  by.y = "ensembl_gene_id",
+  all.x = TRUE
+)# Merge, keeping all rows
+#Assigning "Intergenic" is a practical way to handle peaks that do not match any known Ensembl gene, keeping all peaks in your dataset for analysis.
+ar966_annotated$gene_biotype[is.na(ar966_annotated$gene_biotype)] <- "Intergenic" 
+ar966_annotated$external_gene_name[is.na(ar966_annotated$external_gene_name)] <- "Intergenic"
+head(ar966_annotated[, c("Overlap_Gene", "external_gene_name", "gene_biotype")])
+biotype_summary_966 <- ar966_annotated %>%
+  group_by(gene_biotype) %>%
+  summarise(
+    Peak_Count = n()
+  ) %>%
+  arrange(desc(Peak_Count))
+biotype_summary_966
+
+#### heatmap for protein coding data------------------------------------------------------------------------------------------------------------------------------------------------
+#--------------------- shared protein----------------------------------------------------------------------------------------------------------------------------------
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+library(tibble)
+
+ar965_annotated <- ar965_annotated %>% separate_rows(Overlap_Symbol, sep = ";")
+ar966_annotated <- ar966_annotated %>% separate_rows(Overlap_Symbol, sep = ";")
+ar965_pc <- ar965_annotated %>%
+  filter(gene_biotype == "protein_coding") %>%
+  select(Overlap_Symbol, log2foldchange) %>%
+  rename(log2FC_AR965 = log2foldchange)
+ar966_pc <- ar966_annotated %>%
+  filter(gene_biotype == "protein_coding") %>%
+  select(Overlap_Symbol, log2foldchange) %>%
+  rename(log2FC_AR966 = log2foldchange)
+merged <- full_join(ar965_pc, ar966_pc, by = "Overlap_Symbol") %>%
+  group_by(Overlap_Symbol) %>%
+  summarize(
+    log2FC_AR965 = mean(log2FC_AR965, na.rm = TRUE),
+    log2FC_AR966 = mean(log2FC_AR966, na.rm = TRUE)
+  )
+
+shared_genes <- merged %>%
+  filter(!is.na(log2FC_AR965) & !is.na(log2FC_AR966))
+
+heatmap_mat <- shared_genes %>%
+  column_to_rownames("Overlap_Symbol") %>%
+  as.matrix()
+heatmap_mat[!is.finite(heatmap_mat)] <- 0
+
+pheatmap(
+  heatmap_mat,
+  scale = "row",
+  color = colorRampPalette(c("blue","white","red"))(100),
+  main = "Shared Protein-coding Genes (Shared symbols)"
+)
+
+library(dplyr)
+merged <- dplyr::full_join(
+  ar965_plus %>%
+    dplyr::select(Overlap_Gene, log2foldchange) %>%
+    dplyr::rename(AR965 = log2foldchange),
+  ar966_plus %>%
+    dplyr::select(Overlap_Gene, log2foldchange) %>%
+    dplyr::rename(AR966 = log2foldchange),
+  by = "Overlap_Gene"
+)
+merged[is.na(merged)] <- 0
+mat <- as.matrix(merged[, -1])
+rownames(mat) <- merged$Overlap_gene
+
+heatmap_mat <- shared_genes %>%
+  column_to_rownames("Overlap_Symbol") %>%
+  as.matrix()
+
+heatmap_mat[!is.finite(heatmap_mat)] <- 0
+
+pheatmap(
+  heatmap_mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  main = "Shared Protein-coding Genes (AR965 & AR966)"
+)
+
+#----------------------different protein_coding-------------------------------------------------------------------------------------------------------------------------
+
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+library(tibble)
+# Step 1: Split multiple symbols per peak
+ar965_annotated <- ar965_annotated %>% tidyr::separate_rows(Overlap_Symbol, sep = ";")
+ar966_annotated <- ar966_annotated %>% tidyr::separate_rows(Overlap_Symbol, sep = ";")
+# Step 2: Filter for protein-coding genes and select key columns
+ar965_pc <- ar965_annotated %>%
+  dplyr::filter(gene_biotype == "protein_coding") %>%
+  dplyr::select(Overlap_Symbol, log2foldchange) %>%
+  dplyr::rename(log2FC_AR965 = log2foldchange)
+
+ar966_pc <- ar966_annotated %>%
+  dplyr::filter(gene_biotype == "protein_coding") %>%
+  dplyr::select(Overlap_Symbol, log2foldchange) %>%
+  dplyr::rename(log2FC_AR966 = log2foldchange)
+# Step 3: Average multiple peaks per gene to remove duplicates
+ar965_pc <- ar965_pc %>%
+  group_by(Overlap_Symbol) %>%
+  dplyr::summarize(log2FC_AR965 = mean(log2FC_AR965, na.rm = TRUE))
+
+ar966_pc <- ar966_pc %>%
+  group_by(Overlap_Symbol) %>%
+  dplyr::summarize(log2FC_AR966 = mean(log2FC_AR966, na.rm = TRUE))
+# Step 4: Merge datasets (full join)
+merged <- dplyr::full_join(ar965_pc, ar966_pc, by = "Overlap_Symbol")
+# Step 5: Keep only genes present in ONE dataset (different genes)
+different_genes <- merged %>%
+  dplyr::filter(is.na(log2FC_AR965) | is.na(log2FC_AR966))
+# Step 6: Prepare matrix for heatmap
+heatmap_mat <- different_genes %>%
+  tibble::column_to_rownames("Overlap_Symbol") %>%
+  as.matrix()
+# Replace NA or Inf with 0 for plotting
+heatmap_mat[!is.finite(heatmap_mat)] <- 0
+# Step 7: Plot heatmap
+pheatmap(
+  heatmap_mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  main = "Unique Protein-coding Genes (Different symbols)"
+)
+
+#### heatmap for lcnRNA-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ar965_annotated <- ar965 # Create a copy of ar965
+ar965_annotated$Overlap_Gene_clean <- sub("\\..*$", "", ar965_annotated$Overlap_Gene)# Clean Overlap_Gene column in ar965 for matching
+ar965_annotated <- merge(
+  ar965_annotated,
+  gene_info,
+  by.x = "Overlap_Gene_clean",
+  by.y = "ensembl_gene_id",
+  all.x = TRUE
+)# Merge, keeping all rows
+#Assigning "Intergenic" is a practical way to handle peaks that do not match any known Ensembl gene, keeping all peaks in your dataset for analysis.
+ar965_annotated$gene_biotype[is.na(ar965_annotated$gene_biotype)] <- "Intergenic" 
+ar965_annotated$external_gene_name[is.na(ar965_annotated$external_gene_name)] <- "Intergenic"
+ar966_annotated <- ar966 # Create a copy of ar965
+ar966_annotated$Overlap_Gene_clean <- sub("\\..*$", "", ar966_annotated$Overlap_Gene)# Clean Overlap_Gene column in ar965 for matching
+ar966_annotated <- merge(
+  ar966_annotated,
+  gene_info,
+  by.x = "Overlap_Gene_clean",
+  by.y = "ensembl_gene_id",
+  all.x = TRUE
+)# Merge, keeping all rows
+#Assigning "Intergenic" is a practical way to handle peaks that do not match any known Ensembl gene, keeping all peaks in your dataset for analysis.
+ar966_annotated$gene_biotype[is.na(ar966_annotated$gene_biotype)] <- "Intergenic" 
+ar966_annotated$external_gene_name[is.na(ar966_annotated$external_gene_name)] <- "Intergenic"
+
+# share lcnRNA--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ar965_annotated <- ar965_annotated %>%
+  tidyr::separate_rows(Overlap_Symbol, sep = ";")
+ar966_annotated <- ar966_annotated %>%
+  tidyr::separate_rows(Overlap_Symbol, sep = ";")
+
+ar965_lncrna <- ar965_annotated %>%
+  dplyr::filter(grepl("lnc", gene_biotype, ignore.case = TRUE)) %>%
+  dplyr::select(Overlap_Symbol, log2foldchange) %>%
+  dplyr::rename(log2FC_AR965 = log2foldchange)
+
+ar966_lncrna <- ar966_annotated %>%
+  dplyr::filter(grepl("lnc", gene_biotype, ignore.case = TRUE)) %>%
+  dplyr::select(Overlap_Symbol, log2foldchange) %>%
+  dplyr::rename(log2FC_AR966 = log2foldchange)
+
+ar965_lncrna <- ar965_lncrna %>%
+  group_by(Overlap_Symbol) %>%
+  dplyr::summarize(log2FC_AR965 = mean(log2FC_AR965, na.rm = TRUE))
+ar966_lncrna <- ar966_lncrna %>%
+  group_by(Overlap_Symbol) %>%
+  dplyr::summarize(log2FC_AR966 = mean(log2FC_AR966, na.rm = TRUE))
+
+merged <- dplyr::full_join(ar965_lncrna, ar966_lncrna, by = "Overlap_Symbol")
+
+shared_lncrna <- merged %>%
+  dplyr::filter(!is.na(log2FC_AR965) & !is.na(log2FC_AR966))
+
+heatmap_mat <- shared_lncrna %>%
+  tibble::column_to_rownames("Overlap_Symbol") %>%
+  as.matrix()
+heatmap_mat[!is.finite(heatmap_mat)] <- 0
+
+pheatmap(
+  heatmap_mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  scale = "none",
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  main = "Shared lncRNAs (AR965 & AR966)"
+)
+
+# different lcnRNA------------------------------------------------------------------------------------------------------------------------------------------------------------
+prepare_annotation <- function(df, gene_info){
+  df$Overlap_Gene_clean <- sub("\\..*$", "", df$Overlap_Gene)
+  df <- merge(df, gene_info,
+              by.x = "Overlap_Gene_clean",
+              by.y = "ensembl_gene_id",
+              all.x = TRUE)
+  # Assign "Intergenic" to missing annotations
+  df$gene_biotype[is.na(df$gene_biotype)] <- "Intergenic"
+  df$external_gene_name[is.na(df$external_gene_name)] <- "Intergenic"
+  return(df)
+}
+
+ar965_annotated <- prepare_annotation(ar965, gene_info)
+ar966_annotated <- prepare_annotation(ar966, gene_info)
+
+# ----------------------------
+# Step 2: Split multiple symbols
+# ----------------------------
+ar965_annotated <- ar965_annotated %>% separate_rows(Overlap_Symbol, sep = ";")
+ar966_annotated <- ar966_annotated %>% separate_rows(Overlap_Symbol, sep = ";")
+
+# ----------------------------
+# Step 3: Filter for lncRNAs and select key columns
+# ----------------------------
+ar965_lncrna <- ar965_annotated %>%
+  dplyr::filter(grepl("lnc", gene_biotype, ignore.case = TRUE)) %>%
+  dplyr::select(Overlap_Symbol, log2foldchange) %>%
+  dplyr::rename(log2FC_AR965 = log2foldchange) %>%
+  group_by(Overlap_Symbol) %>%
+  summarize(log2FC_AR965 = mean(log2FC_AR965, na.rm = TRUE))
+
+ar966_lncrna <- ar966_annotated %>%
+  dplyr::filter(grepl("lnc", gene_biotype, ignore.case = TRUE)) %>%
+  dplyr::select(Overlap_Symbol, log2foldchange) %>%
+  dplyr::rename(log2FC_AR966 = log2foldchange) %>%
+  group_by(Overlap_Symbol) %>%
+  summarize(log2FC_AR966 = mean(log2FC_AR966, na.rm = TRUE))
+
+# ----------------------------
+# Step 4: Merge datasets
+# ----------------------------
+merged_lncrna <- full_join(ar965_lncrna, ar966_lncrna, by = "Overlap_Symbol")
+
+# ----------------------------
+# Step 5: Separate shared and different genes
+# ----------------------------
+shared_lncrna <- merged_lncrna %>% filter(!is.na(log2FC_AR965) & !is.na(log2FC_AR966))
+different_lncrna <- merged_lncrna %>% filter(is.na(log2FC_AR965) | is.na(log2FC_AR966))
+
+# ----------------------------
+# Step 6: Plot shared lncRNAs heatmap
+# ----------------------------
+if(nrow(shared_lncrna) > 0){
+  heatmap_shared <- shared_lncrna %>%
+    column_to_rownames("Overlap_Symbol") %>%
+    as.matrix()
+  heatmap_shared[!is.finite(heatmap_shared)] <- 0
+  
+  pheatmap(
+    heatmap_shared,
+    cluster_rows = TRUE,
+    cluster_cols = TRUE,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    scale = "none",
+    color = colorRampPalette(c("blue","white","red"))(100),
+    main = "Shared lncRNAs (AR965 & AR966)"
+  )
+} else {
+  message("No shared lncRNAs found.")
+}
+
+# ----------------------------
+# Step 7: Plot different lncRNAs heatmap
+# ----------------------------
+if(nrow(different_lncrna) > 0){
+  heatmap_diff <- different_lncrna %>%
+    column_to_rownames("Overlap_Symbol") %>%
+    as.matrix()
+  heatmap_diff[!is.finite(heatmap_diff)] <- 0
+  
+  pheatmap(
+    heatmap_diff,
+    cluster_rows = TRUE,
+    cluster_cols = TRUE,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    scale = "none",
+    color = colorRampPalette(c("blue","white","red"))(100),
+    main = "Unique lncRNAs (Different symbols)"
+  )
+} else {
+  message("No unique/different lncRNAs found.")
+}
+
+####
